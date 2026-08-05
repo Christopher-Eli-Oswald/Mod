@@ -10,21 +10,6 @@ using UnityEngine;
 
 namespace DeepMineMod;
 
-/// <summary>
-/// Experimental underground-resource brush for Captain of Industry 0.8.6c.
-///
-/// F10 activates the tool.
-/// Alt + mouse wheel changes the terrain material.
-/// Shift + mouse wheel changes the circular brush radius.
-/// Ctrl + mouse wheel changes deposit thickness.
-/// Left click paints the deposit without changing surface height.
-/// Right click exits.
-///
-/// The tool deliberately calls TerrainManager's public
-/// TryAddMaterialToUndergroundTopFourLayer_NoHeightChange API instead of
-/// modifying raw terrain arrays. This keeps terrain notifications and save
-/// tracking inside the game-owned terrain manager.
-/// </summary>
 [GlobalDependency(RegistrationMode.AsEverything, false, false)]
 public sealed class DeepMineBrushTool : IUnityInputController {
     private const int MinRadius = 1;
@@ -36,8 +21,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
     private readonly TerrainCursor m_terrainCursor;
     private readonly TerrainManager m_terrainManager;
     private readonly TerrainMaterialProto[] m_materials;
-    private readonly KeyBindings m_binding =
-        KeyBindings.FromKey(KbCategory.Tools, ShortcutMode.Game, KeyCode.F10);
 
     private int m_materialIndex;
     private int m_radius = 8;
@@ -45,6 +28,9 @@ public sealed class DeepMineBrushTool : IUnityInputController {
     private bool m_isActive;
 
     public ControllerConfig Config => ControllerConfig.ToolBlockingCamera;
+    public TerrainMaterialProto[] Materials => m_materials;
+    public TerrainMaterialProto SelectedMaterial =>
+        m_materials.Length == 0 ? null : m_materials[m_materialIndex];
 
     public DeepMineBrushTool(
         IUnityInputMgr inputManager,
@@ -60,9 +46,21 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             .OrderBy(x => x.Id.Value)
             .ToArray();
 
-        m_inputManager.RegisterGlobalShortcut(_ => m_binding, this);
+        Log.Info($"DeepMineMod: brush created with {m_materials.Length} terrain materials");
+    }
 
-        Log.Info($"DeepMineMod: F10 brush registered with {m_materials.Length} terrain materials");
+    public void SetMaterial(TerrainMaterialProto material) {
+        if (material == null) return;
+
+        for (int i = 0; i < m_materials.Length; i++) {
+            if (ReferenceEquals(m_materials[i], material) || m_materials[i].Id.Value == material.Id.Value) {
+                m_materialIndex = i;
+                logCurrentSettings("material selected");
+                return;
+            }
+        }
+
+        Log.Warning($"DeepMineMod: ignored unknown terrain material {material.Id.Value}");
     }
 
     public void Activate() {
@@ -161,10 +159,12 @@ public sealed class DeepMineBrushTool : IUnityInputController {
 
     private void cycleMaterial(int direction) {
         int count = m_materials.Length;
+        if (count == 0) return;
         m_materialIndex = ((m_materialIndex + direction) % count + count) % count;
     }
 
     private void logCurrentSettings(string reason) {
+        if (m_materials.Length == 0) return;
         TerrainMaterialProto material = m_materials[m_materialIndex];
         Log.Info(
             $"DeepMineMod: brush {reason}; material={material.Id.Value}, " +
