@@ -1,5 +1,4 @@
 using Mafi;
-using Mafi.Base;
 using Mafi.Collections;
 using Mafi.Core;
 using Mafi.Core.Mods;
@@ -7,35 +6,46 @@ using Mafi.Core.Prototypes;
 
 namespace DeepMineMod;
 
-public sealed class DeepMineMod : DataOnlyMod, IMod {
-    public DeepMineMod(ModManifest manifest) : base(manifest) {
+/// <summary>
+/// Main mod entry point. This implements IMod directly so Captain of Industry
+/// invokes this mod's dependency and initialization lifecycle methods instead
+/// of the non-virtual no-op implementations supplied by DataOnlyMod.
+/// </summary>
+public sealed class DeepMineMod : IMod {
+    public ModManifest Manifest { get; }
+
+    public DeepMineMod(ModManifest manifest) {
+        Manifest = manifest;
         Log.Info("DeepMineMod: loaded");
     }
 
-    public override void RegisterPrototypes(ProtoRegistrator registrator) {
+    public void RegisterPrototypes(ProtoRegistrator registrator) {
         Log.Info("DeepMineMod: prototype registration complete");
     }
 
-    void IMod.RegisterDependencies(
+    public void RegisterDependencies(
         DependencyResolverBuilder depBuilder,
         ProtosDb protosDb,
         bool gameWasLoaded)
     {
-        // DeepMineBrushTool is registered automatically through its
-        // GlobalDependency attribute. Do not register it twice here.
-        Log.Info("DeepMineMod: deep mine brush dependency discovered");
+        // DeepMineBrushTool carries GlobalDependency, so it is discovered by
+        // the game's dependency scanner. Initialize() resolves it explicitly
+        // because dependencies are otherwise created lazily.
+        Log.Info("DeepMineMod: dependency registration reached");
     }
 
-    void IMod.EarlyInit(DependencyResolver resolver) {
+    public void EarlyInit(DependencyResolver resolver) {
+        Log.Info("DeepMineMod: early initialization reached");
     }
 
-    void IMod.Initialize(DependencyResolver resolver, bool gameWasLoaded) {
-        // Dependency resolution is lazy. Force creation here so the brush
-        // constructor registers its shortcut with the Unity input manager.
+    public void Initialize(DependencyResolver resolver, bool gameWasLoaded) {
         resolver.Resolve<DeepMineBrushTool>();
         Log.Info("DeepMineMod: deep mine brush initialized");
     }
 
-    public override void MigrateJsonConfig(VersionSlim savedVersion, Dict<string, object> savedValues) {
+    public void MigrateJsonConfig(
+        VersionSlim savedVersion,
+        Dict<string, object> savedValues)
+    {
     }
 }
