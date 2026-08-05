@@ -4,6 +4,7 @@ using Mafi;
 using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
 using Mafi.Core.Terrain;
+using Mafi.Unity;
 using Mafi.Unity.InputControl;
 using UnityEngine;
 
