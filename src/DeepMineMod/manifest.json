@@ -1,0 +1,13 @@
+{
+  "id": "DeepMineMod",
+  "version": "0.1.0",
+  "display_name": "Deep Mine Tool",
+  "description_short": "Experimental sandbox-style tool foundation for creating buried terrain-resource deposits.",
+  "description_long": "Adds the foundation for a sandbox-style deep deposit editor. The first build includes a runtime terrain API probe that records the exact terrain-editing services and methods exposed by the installed Captain of Industry version. This avoids hardcoding unstable internal APIs before the deposit writer is enabled.",
+  "authors": ["Christopher Eli Oswald"],
+  "min_game_version": "0.8.3",
+  "primary_dlls": ["DeepMineMod.dll"],
+  "non_locking_dll_load": true,
+  "can_add_to_saved_game": true,
+  "can_remove_from_saved_game": true
+}
