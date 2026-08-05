@@ -1,0 +1,17 @@
+DeepMineMod terrain API probe
+
+1. Pull or download branch: agent/deep-mine-mod
+2. Build src/DeepMineMod/DeepMineMod.csproj in Release mode.
+3. Replace the installed DeepMineMod.dll with the new Release DLL.
+4. Start Captain of Industry and load a save.
+5. Close the game after reaching the map.
+6. Open the newest game log and search for:
+
+   DeepMineMod API:
+
+7. Upload the complete log or attach every line between:
+
+   DeepMineMod API: ===== BEGIN TERRAIN API PROBE =====
+   DeepMineMod API: ===== END TERRAIN API PROBE =====
+
+The probe is read-only. It inspects type and method signatures and does not modify terrain or save data.
