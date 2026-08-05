@@ -21,8 +21,20 @@ public sealed class DeepMineMod : DataOnlyMod, IMod {
         ProtosDb protosDb,
         bool gameWasLoaded)
     {
+        // DeepMineBrushTool is also marked as a GlobalDependency, but registering
+        // it explicitly keeps the mod self-contained and version-stable.
         depBuilder.RegisterDependency<DeepMineBrushTool>();
         Log.Info("DeepMineMod: deep mine brush dependency registered");
+    }
+
+    void IMod.EarlyInit(DependencyResolver resolver) {
+    }
+
+    void IMod.Initialize(DependencyResolver resolver, bool gameWasLoaded) {
+        // Dependency resolution is lazy. Force creation here so the brush
+        // constructor registers its shortcut with the Unity input manager.
+        resolver.Resolve<DeepMineBrushTool>();
+        Log.Info("DeepMineMod: deep mine brush initialized");
     }
 
     public override void MigrateJsonConfig(VersionSlim savedVersion, Dict<string, object> savedValues) {
