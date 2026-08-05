@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <OutputType>Library</OutputType>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>DeepMineMod</AssemblyName>
+    <RootNamespace>DeepMineMod</RootNamespace>
+    <COI_ROOT Condition="'$(COI_ROOT)' == ''">$(MSBuildProjectDirectory)\..\..\game</COI_ROOT>
+    <ManagedDir>$(COI_ROOT)\Captain of Industry_Data\Managed</ManagedDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Mafi"><HintPath>$(ManagedDir)\Mafi.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Mafi.Core"><HintPath>$(ManagedDir)\Mafi.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Mafi.Base"><HintPath>$(ManagedDir)\Mafi.Base.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Mafi.Unity"><HintPath>$(ManagedDir)\Mafi.Unity.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(ManagedDir)\UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System"><HintPath>$(ManagedDir)\System.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.Core"><HintPath>$(ManagedDir)\System.Core.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="CopyModFiles" AfterTargets="Build">
+    <MakeDir Directories="$(OutputPath)package\DeepMineMod" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(OutputPath)package\DeepMineMod" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)\manifest.json" DestinationFolder="$(OutputPath)package\DeepMineMod" />
+  </Target>
+</Project>
