@@ -21,10 +21,9 @@ public sealed class DeepMineMod : DataOnlyMod, IMod {
         ProtosDb protosDb,
         bool gameWasLoaded)
     {
-        // DeepMineBrushTool is also marked as a GlobalDependency, but registering
-        // it explicitly keeps the mod self-contained and version-stable.
-        depBuilder.RegisterDependency<DeepMineBrushTool>();
-        Log.Info("DeepMineMod: deep mine brush dependency registered");
+        // DeepMineBrushTool is registered automatically through its
+        // GlobalDependency attribute. Do not register it twice here.
+        Log.Info("DeepMineMod: deep mine brush dependency discovered");
     }
 
     void IMod.EarlyInit(DependencyResolver resolver) {
