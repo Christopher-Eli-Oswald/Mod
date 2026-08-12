@@ -16,20 +16,22 @@ using UnityEngine;
 
 namespace DeepMineMod;
 
+/// <summary>
+/// Live-save map resource editor. Resource selection follows the same editor-visible
+/// mineable TerrainMaterialProto catalog used by the map-editor workflow, while the
+/// brush applies changes directly to the loaded save so the player can continue playing.
+/// </summary>
 public sealed class DeepMineWindow : Window {
     private Option<ProductProto> m_selectedProduct = Option<ProductProto>.None;
 
     public DeepMineWindow(UiContext context, DeepMineBrushTool tool)
-        : base("Deep Mine".AsLoc())
+        : base("Live Map Resource Editor".AsLoc())
     {
         ShortcutToShow(KeyBindings.FromKey(KbCategory.Tools, ShortcutMode.Game, KeyCode.F10));
-        WindowSize(384.px(), Px.Auto).MakeMovable().EnablePinning();
+        WindowSize(400.px(), Px.Auto).MakeMovable().EnablePinning();
 
-        // MinedProduct is a LooseProductProto. Store the dictionary behind the
-        // common ProductProto base type because SingleProductPickerUi works with
-        // ProductProto/Option<ProductProto>.
         Dictionary<ProductProto, TerrainMaterialProto> materialByProduct = tool.Materials
-            .Where(x => !x.IgnoreInEditor && x.MinedProduct != null)
+            .Where(x => x.MinedProduct != null)
             .GroupBy(x => (ProductProto)x.MinedProduct)
             .ToDictionary(g => g.Key, g => g.First());
 
@@ -41,23 +43,27 @@ public sealed class DeepMineWindow : Window {
 
         var activateButton = new ButtonIcon(
                 Button.General,
-                "Assets/Unity/UserInterface/Toolbar/Flatten.svg",
+                "Assets/Unity/UserInterface/Toolbar/PaintBrush.svg",
                 () => {
                     ProductProto selectedProduct = m_selectedProduct.ValueOrNull;
-                    if (selectedProduct != null && materialByProduct.TryGetValue(selectedProduct, out TerrainMaterialProto material)) {
+                    if (selectedProduct != null &&
+                        materialByProduct.TryGetValue(selectedProduct, out TerrainMaterialProto material)) {
                         tool.SetMaterial(material);
                     }
                     context.InputMgr.ActivateNewController(tool);
                 })
             .Medium()
-            .Tooltip("Activate the deep-deposit brush with the selected resource. Shift+wheel changes radius; Ctrl+wheel changes thickness.".AsLoc());
+            .Tooltip(
+                "Paint mineable resource into the currently loaded map. Hold left mouse and drag to paint; " +
+                "Shift+wheel changes brush radius; Ctrl+wheel changes deposit thickness; right-click exits.".AsLoc());
 
         AddBodySingle(c => c.Gap(6.pt()),
-            new Title("Underground resource".AsLoc()).NoShrink(),
+            new Title("Mineable resource".AsLoc()).NoShrink(),
             picker,
+            new Title("Live brush".AsLoc()).NoShrink(),
             activateButton);
 
-        Log.Info($"DeepMineWindow: constructed with {materialByProduct.Count} selectable underground resources");
+        Log.Info($"DeepMineWindow: live map resource editor constructed with {materialByProduct.Count} resources");
     }
 
     [GlobalDependency(RegistrationMode.AsEverything, false, false)]
@@ -74,13 +80,13 @@ public sealed class DeepMineWindow : Window {
         {
             ctx.InputManager.RegisterGlobalShortcut(_ => m_binding, this);
             toolbar.AddToolButton(
-                "Deep Mine".AsLoc(),
+                "Live Map Resource Editor".AsLoc(),
                 this,
-                "Assets/Unity/UserInterface/Toolbar/Flatten.svg",
+                "Assets/Unity/UserInterface/Toolbar/PaintBrush.svg",
                 1090f,
                 _ => m_binding);
 
-            Log.Info("DeepMineWindow.Controller: registered F10 and toolbar button");
+            Log.Info("DeepMineWindow.Controller: registered live map resource editor on F10 and toolbar");
         }
     }
 }
