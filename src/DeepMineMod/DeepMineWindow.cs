@@ -25,9 +25,12 @@ public sealed class DeepMineWindow : Window {
         ShortcutToShow(KeyBindings.FromKey(KbCategory.Tools, ShortcutMode.Game, KeyCode.F10));
         WindowSize(384.px(), Px.Auto).MakeMovable().EnablePinning();
 
-        var materialByProduct = tool.Materials
+        // MinedProduct is a LooseProductProto. Store the dictionary behind the
+        // common ProductProto base type because SingleProductPickerUi works with
+        // ProductProto/Option<ProductProto>.
+        Dictionary<ProductProto, TerrainMaterialProto> materialByProduct = tool.Materials
             .Where(x => !x.IgnoreInEditor && x.MinedProduct != null)
-            .GroupBy(x => x.MinedProduct)
+            .GroupBy(x => (ProductProto)x.MinedProduct)
             .ToDictionary(g => g.Key, g => g.First());
 
         var picker = new SingleProductPickerUi(
