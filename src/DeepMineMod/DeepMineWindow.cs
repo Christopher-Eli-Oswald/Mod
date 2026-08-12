@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Mafi;
-using Mafi.Core.Terrain;
+using Mafi.Core.Products;
 using Mafi.Localization;
 using Mafi.Unity;
 using Mafi.Unity.InputControl;
@@ -13,54 +13,53 @@ using Mafi.Unity.UiStatic.Toolbar;
 using Mafi.Unity.UiToolkit.Component;
 using Mafi.Unity.UiToolkit.Library;
 using UnityEngine;
-using UnityEngine.UIElements;
 
 namespace DeepMineMod;
 
 public sealed class DeepMineWindow : Window {
+    private Option<ProductProto> m_selectedProduct = Option<ProductProto>.None;
+
     public DeepMineWindow(UiContext context, DeepMineBrushTool tool)
         : base("Deep Mine".AsLoc())
     {
         ShortcutToShow(KeyBindings.FromKey(KbCategory.Tools, ShortcutMode.Game, KeyCode.F10));
-        WindowSize(360.px(), Px.Auto).MakeMovable().EnablePinning();
+        WindowSize(384.px(), Px.Auto).MakeMovable().EnablePinning();
 
-        List<TerrainMaterialProto> materials = tool.Materials.ToList();
-        List<string> materialNames = materials
-            .Select(x => x.Id.Value)
-            .ToList();
+        var materialByProduct = tool.Materials
+            .Where(x => !x.IgnoreInEditor && x.MinedProduct != null)
+            .GroupBy(x => x.MinedProduct)
+            .ToDictionary(g => g.Key, g => g.First());
 
-        int selectedIndex = 0;
-        TerrainMaterialProto selected = tool.SelectedMaterial;
-        if (selected != null) {
-            int existingIndex = materials.FindIndex(x => x.Id.Value == selected.Id.Value);
-            if (existingIndex >= 0) selectedIndex = existingIndex;
+        TerrainMaterialProto initialMaterial = tool.SelectedMaterial;
+        if (initialMaterial != null && initialMaterial.MinedProduct != null) {
+            m_selectedProduct = initialMaterial.MinedProduct;
         }
 
-        var dropdown = new DropdownField(
-            "Resource",
-            materialNames,
-            materialNames.Count == 0 ? -1 : selectedIndex);
-
-        dropdown.RegisterValueChangedCallback(evt => {
-            int index = materialNames.IndexOf(evt.newValue);
-            if (index >= 0 && index < materials.Count) {
-                tool.SetMaterial(materials[index]);
-            }
-        });
+        var picker = new SingleProductPickerUi(
+            () => materialByProduct.Keys.OrderBy(x => x.Strings.Name.TranslatedString),
+            p => m_selectedProduct = p,
+            () => m_selectedProduct,
+            () => m_selectedProduct = Option<ProductProto>.None);
 
         var activateButton = new ButtonIcon(
                 Button.General,
                 "Assets/Unity/UserInterface/Toolbar/Flatten.svg",
-                () => context.InputMgr.ActivateNewController(tool))
+                () => {
+                    ProductProto selectedProduct = m_selectedProduct.ValueOrNull;
+                    if (selectedProduct != null && materialByProduct.TryGetValue(selectedProduct, out TerrainMaterialProto material)) {
+                        tool.SetMaterial(material);
+                    }
+                    context.InputMgr.ActivateNewController(tool);
+                })
             .Medium()
-            .Tooltip("Activate the deep-deposit brush. Shift+wheel changes radius, Ctrl+wheel changes thickness, Alt+wheel cycles resources.".AsLoc());
+            .Tooltip("Activate the deep-deposit brush with the selected resource. Shift+wheel changes radius; Ctrl+wheel changes thickness.".AsLoc());
 
         AddBodySingle(c => c.Gap(6.pt()),
-            new Title("Underground resource brush".AsLoc()).NoShrink(),
-            dropdown,
+            new Title("Underground resource".AsLoc()).NoShrink(),
+            picker,
             activateButton);
 
-        Log.Info("DeepMineWindow: constructed with resource dropdown");
+        Log.Info($"DeepMineWindow: constructed with {materialByProduct.Count} selectable underground resources");
     }
 
     [GlobalDependency(RegistrationMode.AsEverything, false, false)]
