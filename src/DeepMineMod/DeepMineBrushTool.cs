@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using Mafi;
-using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
 using Mafi.Core.Terrain;
 using Mafi.Unity;
@@ -10,6 +9,17 @@ using UnityEngine;
 
 namespace DeepMineMod;
 
+/// <summary>
+/// Live-save resource painter modeled after the map editor's mineable-resource workflow.
+///
+/// The real map editor stores terrain features and then regenerates terrain. Re-running that
+/// generator over an established save would be destructive, so this controller mirrors the
+/// editor's resource/material selection and brush behavior while applying the resource layer
+/// directly to the existing TerrainManager.
+///
+/// Left mouse paints continuously while dragging. Right mouse exits.
+/// Shift + wheel changes radius. Ctrl + wheel changes deposit thickness.
+/// </summary>
 [GlobalDependency(RegistrationMode.AsEverything, false, false)]
 public sealed class DeepMineBrushTool : IUnityInputController {
     private const int MinRadius = 1;
@@ -26,11 +36,22 @@ public sealed class DeepMineBrushTool : IUnityInputController {
     private int m_radius = 8;
     private int m_thickness = 10;
     private bool m_isActive;
+    private bool m_hasLastPaintCenter;
+    private Tile2i m_lastPaintCenter;
 
     public ControllerConfig Config => ControllerConfig.ToolBlockingCamera;
+
+    /// <summary>
+    /// Same practical catalog the map editor exposes for mineable terrain resources:
+    /// editor-visible TerrainMaterialProto entries which produce a mined product.
+    /// </summary>
     public TerrainMaterialProto[] Materials => m_materials;
+
     public TerrainMaterialProto SelectedMaterial =>
         m_materials.Length == 0 ? null : m_materials[m_materialIndex];
+
+    public int Radius => m_radius;
+    public int Thickness => m_thickness;
 
     public DeepMineBrushTool(
         IUnityInputMgr inputManager,
@@ -42,11 +63,15 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         m_terrainCursor = terrainCursor;
         m_terrainManager = terrainManager;
 
+        // Map-editor style resource list: don't expose decorative/internal terrain materials.
+        // A terrain material is a resource when it is editor-visible and has a mined product.
         m_materials = protosDb.All<TerrainMaterialProto>()
-            .OrderBy(x => x.Id.Value)
+            .Where(x => !x.IgnoreInEditor && x.MinedProduct != null)
+            .OrderBy(x => x.MinedProduct.Strings.Name.TranslatedString)
+            .ThenBy(x => x.Id.Value)
             .ToArray();
 
-        Log.Info($"DeepMineMod: brush created with {m_materials.Length} terrain materials");
+        Log.Info($"DeepMineMod: live map-editor brush created with {m_materials.Length} mineable resources");
     }
 
     public void SetMaterial(TerrainMaterialProto material) {
@@ -55,31 +80,41 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         for (int i = 0; i < m_materials.Length; i++) {
             if (ReferenceEquals(m_materials[i], material) || m_materials[i].Id.Value == material.Id.Value) {
                 m_materialIndex = i;
-                logCurrentSettings("material selected");
+                logCurrentSettings("resource selected");
                 return;
             }
         }
 
-        Log.Warning($"DeepMineMod: ignored unknown terrain material {material.Id.Value}");
+        Log.Warning($"DeepMineMod: ignored non-map-editor resource material {material.Id.Value}");
+    }
+
+    public void SetRadius(int radius) {
+        m_radius = clamp(radius, MinRadius, MaxRadius);
+        logCurrentSettings("radius set");
+    }
+
+    public void SetThickness(int thickness) {
+        m_thickness = clamp(thickness, MinThickness, MaxThickness);
+        logCurrentSettings("thickness set");
     }
 
     public void Activate() {
         if (m_materials.Length == 0) {
-            Log.Warning("DeepMineMod: no terrain materials were registered; brush cannot activate");
+            Log.Warning("DeepMineMod: no editor-visible mineable terrain resources are registered");
             return;
         }
 
         m_isActive = true;
+        m_hasLastPaintCenter = false;
         m_terrainCursor.Activate();
-        logCurrentSettings("activated");
+        logCurrentSettings("live editor activated");
     }
 
     public void Deactivate() {
-        if (m_isActive) {
-            m_terrainCursor.Deactivate();
-        }
+        if (m_isActive) m_terrainCursor.Deactivate();
         m_isActive = false;
-        Log.Info("DeepMineMod: brush deactivated");
+        m_hasLastPaintCenter = false;
+        Log.Info("DeepMineMod: live map-editor resource painter deactivated");
     }
 
     public bool InputUpdate() {
@@ -93,30 +128,32 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         float wheel = Input.mouseScrollDelta.y;
         if (wheel != 0f) {
             int direction = wheel > 0f ? 1 : -1;
-            bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
             bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
             bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
-            if (alt) {
-                cycleMaterial(direction);
-                logCurrentSettings("material changed");
-                return true;
-            }
             if (ctrl) {
-                m_thickness = clamp(m_thickness + direction, MinThickness, MaxThickness);
-                logCurrentSettings("thickness changed");
+                SetThickness(m_thickness + direction);
                 return true;
             }
             if (shift) {
-                m_radius = clamp(m_radius + direction, MinRadius, MaxRadius);
-                logCurrentSettings("radius changed");
+                SetRadius(m_radius + direction);
                 return true;
             }
         }
 
-        if (Input.GetMouseButtonDown(0) && m_terrainCursor.HasValue) {
-            paintCircle(m_terrainCursor.Tile2i);
+        // Map-editor style painting: holding LMB paints continuously as the cursor moves.
+        if (Input.GetMouseButton(0) && m_terrainCursor.HasValue) {
+            Tile2i center = m_terrainCursor.Tile2i;
+            if (!m_hasLastPaintCenter || !center.Equals(m_lastPaintCenter)) {
+                paintCircle(center);
+                m_lastPaintCenter = center;
+                m_hasLastPaintCenter = true;
+            }
             return true;
+        }
+
+        if (Input.GetMouseButtonUp(0)) {
+            m_hasLastPaintCenter = false;
         }
 
         return false;
@@ -141,35 +178,36 @@ public sealed class DeepMineBrushTool : IUnityInputController {
                 try {
                     Tile2iAndIndex tile = m_terrainManager.ExtendTileIndex(x, y);
 
-                    // This API is a better match for the requested behavior than
-                    // TryAddMaterialToUndergroundTopFourLayer_NoHeightChange. It
-                    // writes directly below the surface layer and explicitly keeps
-                    // the terrain height unchanged.
+                    // Preserve the developed surface. The map editor normally achieves its final
+                    // resource layers during terrain generation; in a live save we write that
+                    // mineable layer below the current surface instead of regenerating the map.
                     m_terrainManager.DumpMaterialToSecondLayer_NoHeightChange(tile, layer);
                     changed++;
-                } catch (Exception ex) {
+                }
+                catch (Exception ex) {
                     failed++;
-                    Log.Warning($"DeepMineMod: skipped tile ({x}, {y}): {ex.Message}");
+                    if (failed <= 3) {
+                        Log.Warning($"DeepMineMod: resource paint skipped tile ({x}, {y}): {ex.Message}");
+                    }
                 }
             }
         }
 
         Log.Info(
-            $"DeepMineMod: painted underground {material.Id.Value}, thickness {m_thickness}, " +
-            $"radius {m_radius} at ({center.X}, {center.Y}); changed={changed}, failed={failed}");
-    }
-
-    private void cycleMaterial(int direction) {
-        int count = m_materials.Length;
-        if (count == 0) return;
-        m_materialIndex = ((m_materialIndex + direction) % count + count) % count;
+            $"DeepMineMod: live editor painted resource={material.Id.Value}, " +
+            $"thickness={m_thickness}, radius={m_radius}, center=({center.X},{center.Y}), " +
+            $"changed={changed}, failed={failed}");
     }
 
     private void logCurrentSettings(string reason) {
         if (m_materials.Length == 0) return;
         TerrainMaterialProto material = m_materials[m_materialIndex];
+        string product = material.MinedProduct == null
+            ? material.Id.Value
+            : material.MinedProduct.Strings.Name.TranslatedString;
+
         Log.Info(
-            $"DeepMineMod: brush {reason}; material={material.Id.Value}, " +
+            $"DeepMineMod: {reason}; resource={product} ({material.Id.Value}), " +
             $"radius={m_radius}, thickness={m_thickness}");
     }
 
