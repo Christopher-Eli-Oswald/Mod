@@ -130,7 +130,7 @@ public sealed class DeepMineBrushTool : IUnityInputController {
 
         int radiusSquared = m_radius * m_radius;
         int changed = 0;
-        int rejected = 0;
+        int failed = 0;
 
         for (int y = center.Y - m_radius; y <= center.Y + m_radius; y++) {
             for (int x = center.X - m_radius; x <= center.X + m_radius; x++) {
@@ -140,21 +140,23 @@ public sealed class DeepMineBrushTool : IUnityInputController {
 
                 try {
                     Tile2iAndIndex tile = m_terrainManager.ExtendTileIndex(x, y);
-                    if (m_terrainManager.TryAddMaterialToUndergroundTopFourLayer_NoHeightChange(tile, layer)) {
-                        changed++;
-                    } else {
-                        rejected++;
-                    }
+
+                    // This API is a better match for the requested behavior than
+                    // TryAddMaterialToUndergroundTopFourLayer_NoHeightChange. It
+                    // writes directly below the surface layer and explicitly keeps
+                    // the terrain height unchanged.
+                    m_terrainManager.DumpMaterialToSecondLayer_NoHeightChange(tile, layer);
+                    changed++;
                 } catch (Exception ex) {
-                    rejected++;
+                    failed++;
                     Log.Warning($"DeepMineMod: skipped tile ({x}, {y}): {ex.Message}");
                 }
             }
         }
 
         Log.Info(
-            $"DeepMineMod: painted {material.Id.Value}, thickness {m_thickness}, " +
-            $"radius {m_radius} at ({center.X}, {center.Y}); changed={changed}, rejected={rejected}");
+            $"DeepMineMod: painted underground {material.Id.Value}, thickness {m_thickness}, " +
+            $"radius {m_radius} at ({center.X}, {center.Y}); changed={changed}, failed={failed}");
     }
 
     private void cycleMaterial(int direction) {
