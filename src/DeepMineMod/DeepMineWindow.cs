@@ -30,11 +30,6 @@ public sealed class DeepMineWindow : Window {
             .GroupBy(x => x.MinedProduct)
             .ToDictionary(g => g.Key, g => g.First());
 
-        TerrainMaterialProto initialMaterial = tool.SelectedMaterial;
-        if (initialMaterial != null && initialMaterial.MinedProduct != null) {
-            m_selectedProduct = initialMaterial.MinedProduct;
-        }
-
         var picker = new SingleProductPickerUi(
             () => materialByProduct.Keys.OrderBy(x => x.Strings.Name.TranslatedString),
             p => m_selectedProduct = p,
