@@ -52,11 +52,11 @@ public sealed class DeepMineWindow : Window {
                     context.InputMgr.ActivateNewController(tool);
                 })
             .Medium()
-            .Tooltip(
+            .Tooltip((
                 "Paint a mineable resource deep underground without changing the surface. " +
                 "Hold left mouse and drag to paint. Alt+wheel changes depth (default 50); " +
                 "Ctrl+wheel changes deposit thickness (default 10); Shift+wheel changes brush radius (default 8); " +
-                "right-click exits.".AsLoc());
+                "right-click exits.").AsLoc());
 
         AddBodySingle(c => c.Gap(6.pt()),
             new Title("Mineable resource".AsLoc()).NoShrink(),
