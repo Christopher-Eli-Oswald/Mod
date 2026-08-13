@@ -1,4 +1,5 @@
 using Mafi;
+using Mafi.Numerics;
 using UnityEngine;
 
 namespace DeepMineMod;
