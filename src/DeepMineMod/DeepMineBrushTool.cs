@@ -46,6 +46,10 @@ public sealed class DeepMineBrushTool : IUnityInputController {
     private bool m_hasLastPaintCenter;
     private Tile2i m_lastPaintCenter;
 
+    private GameObject m_previewGo;
+    private DeepMinePreviewCircleMb m_previewCircle;
+    private DeepMineInfoPanelMb m_infoPanel;
+
     public ControllerConfig Config => ControllerConfig.ToolBlockingCamera;
 
     public TerrainMaterialProto[] Materials => m_materials;
@@ -72,9 +76,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             .ThenBy(x => x.Id.Value)
             .ToArray();
 
-        // SetTileDataNoEvents is intentionally resolved reflectively. It is the game's own
-        // full-layer writer, but its visibility has changed between CoI builds. Reflection
-        // keeps this mod source compatible while still using the exact installed method.
         m_setTileDataNoEvents = typeof(TerrainManager).GetMethod(
             "SetTileDataNoEvents",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
@@ -98,6 +99,7 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         for (int i = 0; i < m_materials.Length; i++) {
             if (ReferenceEquals(m_materials[i], material) || m_materials[i].Id.Value == material.Id.Value) {
                 m_materialIndex = i;
+                updateVisualState();
                 logCurrentSettings("resource selected");
                 return;
             }
@@ -108,16 +110,19 @@ public sealed class DeepMineBrushTool : IUnityInputController {
 
     public void SetRadius(int radius) {
         m_radius = clamp(radius, MinRadius, MaxRadius);
+        updateVisualState();
         logCurrentSettings("radius set");
     }
 
     public void SetThickness(int thickness) {
         m_thickness = clamp(thickness, MinThickness, MaxThickness);
+        updateVisualState();
         logCurrentSettings("thickness set");
     }
 
     public void SetDepth(int depth) {
         m_depth = clamp(depth, MinDepth, MaxDepth);
+        updateVisualState();
         logCurrentSettings("depth set");
     }
 
@@ -134,10 +139,23 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         m_isActive = true;
         m_hasLastPaintCenter = false;
         m_terrainCursor.Activate();
+
+        m_previewGo = new GameObject("DeepMineMod.Preview");
+        m_previewCircle = m_previewGo.AddComponent<DeepMinePreviewCircleMb>();
+        m_infoPanel = m_previewGo.AddComponent<DeepMineInfoPanelMb>();
+        updateVisualState();
+
         logCurrentSettings("deep painter activated");
     }
 
     public void Deactivate() {
+        if (m_previewGo != null) {
+            UnityEngine.Object.Destroy(m_previewGo);
+            m_previewGo = null;
+            m_previewCircle = null;
+            m_infoPanel = null;
+        }
+
         if (m_isActive) m_terrainCursor.Deactivate();
         m_isActive = false;
         m_hasLastPaintCenter = false;
@@ -173,6 +191,16 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             }
         }
 
+        if (m_previewCircle != null) {
+            if (m_terrainCursor.HasValue) {
+                m_previewCircle.SetVisible(true);
+                m_previewCircle.SetCenter(m_terrainCursor.Tile3f);
+            }
+            else {
+                m_previewCircle.SetVisible(false);
+            }
+        }
+
         if (Input.GetMouseButton(0) && m_terrainCursor.HasValue) {
             Tile2i center = m_terrainCursor.Tile2i;
             if (!m_hasLastPaintCenter || !center.Equals(m_lastPaintCenter)) {
@@ -188,6 +216,31 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         }
 
         return false;
+    }
+
+    private void updateVisualState() {
+        if (m_materials.Length == 0) return;
+
+        TerrainMaterialProto material = m_materials[m_materialIndex];
+        string product = material.MinedProduct == null
+            ? material.Id.Value
+            : material.MinedProduct.Strings.Name.TranslatedString;
+
+        if (m_previewCircle != null) {
+            m_previewCircle.SetRadius(m_radius);
+            m_previewCircle.SetColor(new Color(0.2f, 1f, 0.35f, 0.95f));
+        }
+
+        if (m_infoPanel != null) {
+            int bottomDepth = m_depth + m_thickness - 1;
+            m_infoPanel.SetLines(
+                product,
+                $"Depth: {m_depth} tiles below surface",
+                $"Thickness: {m_thickness} tiles",
+                $"Depth band: {m_depth}-{bottomDepth}",
+                $"Radius: {m_radius} tiles",
+                "Alt=depth  Ctrl=thickness  Shift=radius");
+        }
     }
 
     private void paintCircle(Tile2i center) {
@@ -223,12 +276,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             $"changed={changed}, failed={failed}");
     }
 
-    /// <summary>
-    /// Rebuilds one tile's layer stack. Existing layers are split into at-most-one-tile
-    /// slices only until the bottom of the requested deposit. Slices in the selected depth
-    /// band have only their material ID replaced; their exact thickness is preserved.
-    /// Everything below the band is appended unchanged.
-    /// </summary>
     private bool paintDeepLayer(
         Tile2iAndIndex tile,
         Tile2iIndex index,
@@ -257,7 +304,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         for (int layerIndex = 0; layerIndex < originalLayers.Count; layerIndex++) {
             TerrainMaterialThicknessSlim remaining = originalLayers[layerIndex];
 
-            // Once the selected depth band is behind us, preserve every deeper layer exactly.
             if (depthCursor >= targetEnd) {
                 rewritten.Add(remaining);
                 continue;
@@ -284,8 +330,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
                 remaining = next;
             }
 
-            // We stopped because the deposit ended inside this original layer. Preserve
-            // the untouched remainder of that layer as one layer instead of slicing deeper.
             if (!isEmpty(remaining)) {
                 rewritten.Add(remaining);
             }
@@ -303,8 +347,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             m_terrainManager,
             new object[] { rawIndex, height, surface, flags, layers, layers.Length });
 
-        // Total thickness did not change, so this is a material-only notification. This
-        // updates rendering/mining/resource consumers without moving the terrain surface.
         m_terrainManager.NotifyTileMaterialsOnlyChanged(tile);
         return true;
     }
@@ -313,10 +355,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         return layer.Equals(default(TerrainMaterialThicknessSlim));
     }
 
-    /// <summary>
-    /// Tile2iIndex is a compact value type. Its backing member name has changed between
-    /// game builds, so obtain the single integer value reflectively instead of hardcoding it.
-    /// </summary>
     private static int getRawTileIndex(Tile2iIndex index) {
         Type type = typeof(Tile2iIndex);
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
