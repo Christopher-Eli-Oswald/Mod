@@ -8,6 +8,7 @@ using Mafi.Core.Prototypes;
 using Mafi.Core.Terrain;
 using Mafi.Unity;
 using Mafi.Unity.InputControl;
+using Mafi.Unity.InputControl.ResVis;
 using UnityEngine;
 
 namespace DeepMineMod;
@@ -25,6 +26,7 @@ public sealed class DeepMineBrushTool : IUnityInputController {
     private readonly IUnityInputMgr m_inputManager;
     private readonly TerrainCursor m_terrainCursor;
     private readonly TerrainManager m_terrainManager;
+    private readonly ResVisBarsRenderer m_resVisBarsRenderer;
     private readonly TerrainMaterialProto[] m_materials;
     private readonly MethodInfo m_setTileDataNoEvents;
 
@@ -52,11 +54,13 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         IUnityInputMgr inputManager,
         TerrainCursor terrainCursor,
         TerrainManager terrainManager,
+        ResVisBarsRenderer resVisBarsRenderer,
         ProtosDb protosDb)
     {
         m_inputManager = inputManager;
         m_terrainCursor = terrainCursor;
         m_terrainManager = terrainManager;
+        m_resVisBarsRenderer = resVisBarsRenderer;
 
         m_materials = protosDb.All<TerrainMaterialProto>()
             .Where(x => !x.IgnoreInEditor && x.MinedProduct != null)
@@ -257,6 +261,18 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             }
         }
 
+        if (changed > 0) {
+            try {
+                // ResVisBarsRenderer is the same renderer used by CoI's normal resource
+                // overlay columns. Direct terrain rewrites bypass its normal cache update,
+                // so force a rebuild after each brush stamp.
+                m_resVisBarsRenderer.InvalidateAllResourceBars();
+            }
+            catch (Exception ex) {
+                Log.Warning($"DeepMineMod: resource overlay refresh failed: {ex.Message}");
+            }
+        }
+
         Log.Info(
             $"DeepMineMod: painted deep resource={material.Id.Value}, depth={m_depth}, " +
             $"thickness={m_thickness}, radius={m_radius}, center=({center.X},{center.Y}), " +
@@ -335,8 +351,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             m_terrainManager,
             new object[] { rawIndex, height, surface, flags, layers, layers.Length });
 
-        // A full layer-stack notification is intentional here. The height itself is unchanged,
-        // but mining/designation logic needs to rebuild its view of the top terrain layers.
         m_terrainManager.NotifyTileHeightLayersChanged(tile);
         return true;
     }
