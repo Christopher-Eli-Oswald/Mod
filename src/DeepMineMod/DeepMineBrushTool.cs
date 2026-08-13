@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Mafi;
+using Mafi.Core.Products;
 using Mafi.Core.Prototypes;
 using Mafi.Core.Terrain;
 using Mafi.Unity;
@@ -10,15 +13,14 @@ using UnityEngine;
 namespace DeepMineMod;
 
 /// <summary>
-/// Live-save resource painter modeled after the map editor's mineable-resource workflow.
+/// Live-save deep resource painter.
 ///
-/// The real map editor stores terrain features and then regenerates terrain. Re-running that
-/// generator over an established save would be destructive, so this controller mirrors the
-/// editor's resource/material selection and brush behavior while applying the resource layer
-/// directly to the existing TerrainManager.
+/// The brush rewrites only the material layer stack of each painted tile. It keeps the
+/// tile's height, surface and flags unchanged, so a resource can be buried at a chosen
+/// depth without raising/lowering the developed surface.
 ///
-/// Left mouse paints continuously while dragging. Right mouse exits.
-/// Shift + wheel changes radius. Ctrl + wheel changes deposit thickness.
+/// Hold LMB and drag to paint. RMB exits.
+/// Shift + wheel = radius, Ctrl + wheel = deposit thickness, Alt + wheel = depth.
 /// </summary>
 [GlobalDependency(RegistrationMode.AsEverything, false, false)]
 public sealed class DeepMineBrushTool : IUnityInputController {
@@ -26,32 +28,33 @@ public sealed class DeepMineBrushTool : IUnityInputController {
     private const int MaxRadius = 100;
     private const int MinThickness = 1;
     private const int MaxThickness = 100;
+    private const int MinDepth = 1;
+    private const int MaxDepth = 300;
+    private const int MaxSlicesPerTile = 1024;
 
     private readonly IUnityInputMgr m_inputManager;
     private readonly TerrainCursor m_terrainCursor;
     private readonly TerrainManager m_terrainManager;
     private readonly TerrainMaterialProto[] m_materials;
+    private readonly MethodInfo m_setTileDataNoEvents;
 
     private int m_materialIndex;
     private int m_radius = 8;
     private int m_thickness = 10;
+    private int m_depth = 50;
     private bool m_isActive;
     private bool m_hasLastPaintCenter;
     private Tile2i m_lastPaintCenter;
 
     public ControllerConfig Config => ControllerConfig.ToolBlockingCamera;
 
-    /// <summary>
-    /// Same practical catalog the map editor exposes for mineable terrain resources:
-    /// editor-visible TerrainMaterialProto entries which produce a mined product.
-    /// </summary>
     public TerrainMaterialProto[] Materials => m_materials;
-
     public TerrainMaterialProto SelectedMaterial =>
         m_materials.Length == 0 ? null : m_materials[m_materialIndex];
 
     public int Radius => m_radius;
     public int Thickness => m_thickness;
+    public int Depth => m_depth;
 
     public DeepMineBrushTool(
         IUnityInputMgr inputManager,
@@ -63,15 +66,30 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         m_terrainCursor = terrainCursor;
         m_terrainManager = terrainManager;
 
-        // Map-editor style resource list: don't expose decorative/internal terrain materials.
-        // A terrain material is a resource when it is editor-visible and has a mined product.
         m_materials = protosDb.All<TerrainMaterialProto>()
             .Where(x => !x.IgnoreInEditor && x.MinedProduct != null)
             .OrderBy(x => x.MinedProduct.Strings.Name.TranslatedString)
             .ThenBy(x => x.Id.Value)
             .ToArray();
 
-        Log.Info($"DeepMineMod: live map-editor brush created with {m_materials.Length} mineable resources");
+        // SetTileDataNoEvents is intentionally resolved reflectively. It is the game's own
+        // full-layer writer, but its visibility has changed between CoI builds. Reflection
+        // keeps this mod source compatible while still using the exact installed method.
+        m_setTileDataNoEvents = typeof(TerrainManager).GetMethod(
+            "SetTileDataNoEvents",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null,
+            new[] {
+                typeof(int), typeof(HeightTilesF), typeof(TileSurfaceData), typeof(ushort),
+                typeof(TerrainMaterialThicknessSlim[]), typeof(int)
+            },
+            null);
+
+        if (m_setTileDataNoEvents == null) {
+            Log.Error("DeepMineMod: TerrainManager.SetTileDataNoEvents was not found; deep painting is unavailable");
+        }
+
+        Log.Info($"DeepMineMod: deep resource brush created with {m_materials.Length} mineable resources");
     }
 
     public void SetMaterial(TerrainMaterialProto material) {
@@ -85,7 +103,7 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             }
         }
 
-        Log.Warning($"DeepMineMod: ignored non-map-editor resource material {material.Id.Value}");
+        Log.Warning($"DeepMineMod: ignored non-mineable resource material {material.Id.Value}");
     }
 
     public void SetRadius(int radius) {
@@ -98,23 +116,32 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         logCurrentSettings("thickness set");
     }
 
+    public void SetDepth(int depth) {
+        m_depth = clamp(depth, MinDepth, MaxDepth);
+        logCurrentSettings("depth set");
+    }
+
     public void Activate() {
         if (m_materials.Length == 0) {
             Log.Warning("DeepMineMod: no editor-visible mineable terrain resources are registered");
+            return;
+        }
+        if (m_setTileDataNoEvents == null) {
+            Log.Warning("DeepMineMod: deep layer writer is unavailable in this game build");
             return;
         }
 
         m_isActive = true;
         m_hasLastPaintCenter = false;
         m_terrainCursor.Activate();
-        logCurrentSettings("live editor activated");
+        logCurrentSettings("deep painter activated");
     }
 
     public void Deactivate() {
         if (m_isActive) m_terrainCursor.Deactivate();
         m_isActive = false;
         m_hasLastPaintCenter = false;
-        Log.Info("DeepMineMod: live map-editor resource painter deactivated");
+        Log.Info("DeepMineMod: deep resource painter deactivated");
     }
 
     public bool InputUpdate() {
@@ -128,9 +155,14 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         float wheel = Input.mouseScrollDelta.y;
         if (wheel != 0f) {
             int direction = wheel > 0f ? 1 : -1;
+            bool alt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
             bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
             bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
+            if (alt) {
+                SetDepth(m_depth + direction);
+                return true;
+            }
             if (ctrl) {
                 SetThickness(m_thickness + direction);
                 return true;
@@ -141,7 +173,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             }
         }
 
-        // Map-editor style painting: holding LMB paints continuously as the cursor moves.
         if (Input.GetMouseButton(0) && m_terrainCursor.HasValue) {
             Tile2i center = m_terrainCursor.Tile2i;
             if (!m_hasLastPaintCenter || !center.Equals(m_lastPaintCenter)) {
@@ -161,10 +192,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
 
     private void paintCircle(Tile2i center) {
         TerrainMaterialProto material = m_materials[m_materialIndex];
-        var layer = new TerrainMaterialThicknessSlim(
-            material,
-            new ThicknessTilesF(m_thickness));
-
         int radiusSquared = m_radius * m_radius;
         int changed = 0;
         int failed = 0;
@@ -177,26 +204,133 @@ public sealed class DeepMineBrushTool : IUnityInputController {
 
                 try {
                     Tile2iAndIndex tile = m_terrainManager.ExtendTileIndex(x, y);
+                    Tile2iIndex index = m_terrainManager.GetTileIndex(x, y);
 
-                    // Preserve the developed surface. The map editor normally achieves its final
-                    // resource layers during terrain generation; in a live save we write that
-                    // mineable layer below the current surface instead of regenerating the map.
-                    m_terrainManager.DumpMaterialToSecondLayer_NoHeightChange(tile, layer);
-                    changed++;
+                    if (paintDeepLayer(tile, index, material)) changed++;
                 }
                 catch (Exception ex) {
                     failed++;
                     if (failed <= 3) {
-                        Log.Warning($"DeepMineMod: resource paint skipped tile ({x}, {y}): {ex.Message}");
+                        Log.Warning($"DeepMineMod: deep paint skipped tile ({x}, {y}): {ex.Message}");
                     }
                 }
             }
         }
 
         Log.Info(
-            $"DeepMineMod: live editor painted resource={material.Id.Value}, " +
+            $"DeepMineMod: painted deep resource={material.Id.Value}, depth={m_depth}, " +
             $"thickness={m_thickness}, radius={m_radius}, center=({center.X},{center.Y}), " +
             $"changed={changed}, failed={failed}");
+    }
+
+    /// <summary>
+    /// Rebuilds one tile's layer stack. Existing layers are split into at-most-one-tile
+    /// slices only until the bottom of the requested deposit. Slices in the selected depth
+    /// band have only their material ID replaced; their exact thickness is preserved.
+    /// Everything below the band is appended unchanged.
+    /// </summary>
+    private bool paintDeepLayer(
+        Tile2iAndIndex tile,
+        Tile2iIndex index,
+        TerrainMaterialProto material)
+    {
+        var originalLayers = new List<TerrainMaterialThicknessSlim>();
+        foreach (TerrainMaterialThicknessSlim layer in m_terrainManager.EnumerateLayers(index)) {
+            originalLayers.Add(layer);
+        }
+
+        if (originalLayers.Count == 0) return false;
+
+        var oneTile = new ThicknessTilesF(1);
+        TerrainMaterialSlimId targetId =
+            new TerrainMaterialThicknessSlim(material, oneTile).SlimId;
+
+        int targetStart = m_depth;
+        int targetEnd = m_depth + m_thickness;
+        int depthCursor = 0;
+        int slices = 0;
+        bool changed = false;
+        bool bandReached = false;
+
+        var rewritten = new List<TerrainMaterialThicknessSlim>(originalLayers.Count + 8);
+
+        for (int layerIndex = 0; layerIndex < originalLayers.Count; layerIndex++) {
+            TerrainMaterialThicknessSlim remaining = originalLayers[layerIndex];
+
+            // Once the selected depth band is behind us, preserve every deeper layer exactly.
+            if (depthCursor >= targetEnd) {
+                rewritten.Add(remaining);
+                continue;
+            }
+
+            while (!isEmpty(remaining) && depthCursor < targetEnd) {
+                if (++slices > MaxSlicesPerTile) {
+                    throw new InvalidOperationException(
+                        $"terrain layer stack exceeded {MaxSlicesPerTile} slices before depth {targetEnd}");
+                }
+
+                TerrainMaterialThicknessSlim piece = remaining.RemoveAsMuchAs(oneTile, out TerrainMaterialThicknessSlim next);
+                if (isEmpty(piece)) break;
+
+                bool insideBand = depthCursor >= targetStart && depthCursor < targetEnd;
+                if (insideBand) {
+                    bandReached = true;
+                    if (!piece.SlimId.Equals(targetId)) changed = true;
+                    piece = piece.WithNewId(targetId);
+                }
+
+                rewritten.Add(piece);
+                depthCursor++;
+                remaining = next;
+            }
+
+            // We stopped because the deposit ended inside this original layer. Preserve
+            // the untouched remainder of that layer as one layer instead of slicing deeper.
+            if (!isEmpty(remaining)) {
+                rewritten.Add(remaining);
+            }
+        }
+
+        if (!bandReached || !changed) return false;
+
+        HeightTilesF height = m_terrainManager.GetHeight(index);
+        TileSurfaceData surface = m_terrainManager.GetTileSurface(index);
+        ushort flags = (ushort)m_terrainManager.GetTileFlags(index);
+        int rawIndex = getRawTileIndex(index);
+        TerrainMaterialThicknessSlim[] layers = rewritten.ToArray();
+
+        m_setTileDataNoEvents.Invoke(
+            m_terrainManager,
+            new object[] { rawIndex, height, surface, flags, layers, layers.Length });
+
+        // Total thickness did not change, so this is a material-only notification. This
+        // updates rendering/mining/resource consumers without moving the terrain surface.
+        m_terrainManager.NotifyTileMaterialsOnlyChanged(tile);
+        return true;
+    }
+
+    private static bool isEmpty(TerrainMaterialThicknessSlim layer) {
+        return layer.Equals(default(TerrainMaterialThicknessSlim));
+    }
+
+    /// <summary>
+    /// Tile2iIndex is a compact value type. Its backing member name has changed between
+    /// game builds, so obtain the single integer value reflectively instead of hardcoding it.
+    /// </summary>
+    private static int getRawTileIndex(Tile2iIndex index) {
+        Type type = typeof(Tile2iIndex);
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        object boxed = index;
+
+        PropertyInfo property = type.GetProperties(flags)
+            .FirstOrDefault(p => p.PropertyType == typeof(int) && p.GetIndexParameters().Length == 0);
+        if (property != null) return (int)property.GetValue(boxed, null);
+
+        FieldInfo field = type.GetFields(flags)
+            .FirstOrDefault(f => f.FieldType == typeof(int));
+        if (field != null) return (int)field.GetValue(boxed);
+
+        throw new InvalidOperationException("Unable to read Tile2iIndex raw integer value");
     }
 
     private void logCurrentSettings(string reason) {
@@ -208,7 +342,7 @@ public sealed class DeepMineBrushTool : IUnityInputController {
 
         Log.Info(
             $"DeepMineMod: {reason}; resource={product} ({material.Id.Value}), " +
-            $"radius={m_radius}, thickness={m_thickness}");
+            $"depth={m_depth}, thickness={m_thickness}, radius={m_radius}");
     }
 
     private static int clamp(int value, int minimum, int maximum) {
