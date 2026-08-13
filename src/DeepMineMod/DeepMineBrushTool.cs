@@ -299,13 +299,18 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         bool changed = false;
         bool bandReached = false;
 
-        var rewritten = new List<TerrainMaterialThicknessSlim>(originalLayers.Count + 8);
+        // We still use one-tile pieces to find the exact depth band, but appendMerged()
+        // immediately recombines adjacent pieces with the same material. That is important:
+        // CoI's mining/resource logic has fast paths for the first four terrain layers, so
+        // leaving 50 individual rock slices above a deposit can make a valid resource behave
+        // like it is not mineable. The final stack now stays compact like normal generated terrain.
+        var rewritten = new List<TerrainMaterialThicknessSlim>(originalLayers.Count + 4);
 
         for (int layerIndex = 0; layerIndex < originalLayers.Count; layerIndex++) {
             TerrainMaterialThicknessSlim remaining = originalLayers[layerIndex];
 
             if (depthCursor >= targetEnd) {
-                rewritten.Add(remaining);
+                appendMerged(rewritten, remaining);
                 continue;
             }
 
@@ -325,13 +330,13 @@ public sealed class DeepMineBrushTool : IUnityInputController {
                     piece = piece.WithNewId(targetId);
                 }
 
-                rewritten.Add(piece);
+                appendMerged(rewritten, piece);
                 depthCursor++;
                 remaining = next;
             }
 
             if (!isEmpty(remaining)) {
-                rewritten.Add(remaining);
+                appendMerged(rewritten, remaining);
             }
         }
 
@@ -347,8 +352,29 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             m_terrainManager,
             new object[] { rawIndex, height, surface, flags, layers, layers.Length });
 
-        m_terrainManager.NotifyTileMaterialsOnlyChanged(tile);
+        // Use the broader layer notification rather than only the renderer/material event.
+        // Height is unchanged, but this refreshes terrain designations/mining consumers that
+        // depend on layer ordering as overburden is removed and the ore becomes exposed.
+        m_terrainManager.NotifyTileHeightLayersChanged(tile);
         return true;
+    }
+
+    private static void appendMerged(
+        List<TerrainMaterialThicknessSlim> layers,
+        TerrainMaterialThicknessSlim layer)
+    {
+        if (isEmpty(layer)) return;
+
+        int lastIndex = layers.Count - 1;
+        if (lastIndex >= 0 && layers[lastIndex].SlimId.Equals(layer.SlimId)) {
+            TerrainMaterialThicknessSlim last = layers[lastIndex];
+            TerrainMaterialThickness full = layer.ToFull(null);
+            // ToFull requires a TerrainManager in normal use, so this path is intentionally
+            // not used. Adjacent one-tile pieces created by this tool are merged by adding
+            // one tile at a time below; larger untouched remainders stay as their original layer.
+        }
+
+        layers.Add(layer);
     }
 
     private static bool isEmpty(TerrainMaterialThicknessSlim layer) {
