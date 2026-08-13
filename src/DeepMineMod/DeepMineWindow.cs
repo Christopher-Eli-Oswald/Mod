@@ -17,18 +17,17 @@ using UnityEngine;
 namespace DeepMineMod;
 
 /// <summary>
-/// Live-save map resource editor. Resource selection follows the same editor-visible
-/// mineable TerrainMaterialProto catalog used by the map-editor workflow, while the
-/// brush applies changes directly to the loaded save so the player can continue playing.
+/// Live-save deep resource editor. Select a mineable resource, activate the brush,
+/// then paint a buried deposit at the configured depth while the surface stays intact.
 /// </summary>
 public sealed class DeepMineWindow : Window {
     private Option<ProductProto> m_selectedProduct = Option<ProductProto>.None;
 
     public DeepMineWindow(UiContext context, DeepMineBrushTool tool)
-        : base("Live Map Resource Editor".AsLoc())
+        : base("Deep Resource Editor".AsLoc())
     {
         ShortcutToShow(KeyBindings.FromKey(KbCategory.Tools, ShortcutMode.Game, KeyCode.F10));
-        WindowSize(400.px(), Px.Auto).MakeMovable().EnablePinning();
+        WindowSize(420.px(), Px.Auto).MakeMovable().EnablePinning();
 
         Dictionary<ProductProto, TerrainMaterialProto> materialByProduct = tool.Materials
             .Where(x => x.MinedProduct != null)
@@ -54,16 +53,21 @@ public sealed class DeepMineWindow : Window {
                 })
             .Medium()
             .Tooltip(
-                "Paint mineable resource into the currently loaded map. Hold left mouse and drag to paint; " +
-                "Shift+wheel changes brush radius; Ctrl+wheel changes deposit thickness; right-click exits.".AsLoc());
+                "Paint a mineable resource deep underground without changing the surface. " +
+                "Hold left mouse and drag to paint. Alt+wheel changes depth (default 50); " +
+                "Ctrl+wheel changes deposit thickness (default 10); Shift+wheel changes brush radius (default 8); " +
+                "right-click exits.".AsLoc());
 
         AddBodySingle(c => c.Gap(6.pt()),
             new Title("Mineable resource".AsLoc()).NoShrink(),
             picker,
-            new Title("Live brush".AsLoc()).NoShrink(),
+            new Title("Deep underground brush".AsLoc()).NoShrink(),
+            new Title("Alt + wheel: depth | Ctrl + wheel: thickness | Shift + wheel: radius".AsLoc()).NoShrink(),
             activateButton);
 
-        Log.Info($"DeepMineWindow: live map resource editor constructed with {materialByProduct.Count} resources");
+        Log.Info(
+            $"DeepMineWindow: deep resource editor constructed with {materialByProduct.Count} resources; " +
+            $"default depth={tool.Depth}, thickness={tool.Thickness}, radius={tool.Radius}");
     }
 
     [GlobalDependency(RegistrationMode.AsEverything, false, false)]
@@ -80,13 +84,13 @@ public sealed class DeepMineWindow : Window {
         {
             ctx.InputManager.RegisterGlobalShortcut(_ => m_binding, this);
             toolbar.AddToolButton(
-                "Live Map Resource Editor".AsLoc(),
+                "Deep Resource Editor".AsLoc(),
                 this,
                 "Assets/Unity/UserInterface/Toolbar/PaintBrush.svg",
                 1090f,
                 _ => m_binding);
 
-            Log.Info("DeepMineWindow.Controller: registered live map resource editor on F10 and toolbar");
+            Log.Info("DeepMineWindow.Controller: registered deep resource editor on F10 and toolbar");
         }
     }
 }
