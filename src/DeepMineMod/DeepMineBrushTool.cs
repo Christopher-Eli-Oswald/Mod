@@ -12,16 +12,6 @@ using UnityEngine;
 
 namespace DeepMineMod;
 
-/// <summary>
-/// Live-save deep resource painter.
-///
-/// The brush rewrites only the material layer stack of each painted tile. It keeps the
-/// tile's height, surface and flags unchanged, so a resource can be buried at a chosen
-/// depth without raising/lowering the developed surface.
-///
-/// Hold LMB and drag to paint. RMB exits.
-/// Shift + wheel = radius, Ctrl + wheel = deposit thickness, Alt + wheel = depth.
-/// </summary>
 [GlobalDependency(RegistrationMode.AsEverything, false, false)]
 public sealed class DeepMineBrushTool : IUnityInputController {
     private const int MinRadius = 1;
@@ -51,11 +41,9 @@ public sealed class DeepMineBrushTool : IUnityInputController {
     private DeepMineInfoPanelMb m_infoPanel;
 
     public ControllerConfig Config => ControllerConfig.ToolBlockingCamera;
-
     public TerrainMaterialProto[] Materials => m_materials;
     public TerrainMaterialProto SelectedMaterial =>
         m_materials.Length == 0 ? null : m_materials[m_materialIndex];
-
     public int Radius => m_radius;
     public int Thickness => m_thickness;
     public int Depth => m_depth;
@@ -258,7 +246,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
                 try {
                     Tile2iAndIndex tile = m_terrainManager.ExtendTileIndex(x, y);
                     Tile2iIndex index = m_terrainManager.GetTileIndex(x, y);
-
                     if (paintDeepLayer(tile, index, material)) changed++;
                 }
                 catch (Exception ex) {
@@ -285,7 +272,6 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         foreach (TerrainMaterialThicknessSlim layer in m_terrainManager.EnumerateLayers(index)) {
             originalLayers.Add(layer);
         }
-
         if (originalLayers.Count == 0) return false;
 
         var oneTile = new ThicknessTilesF(1);
@@ -299,18 +285,13 @@ public sealed class DeepMineBrushTool : IUnityInputController {
         bool changed = false;
         bool bandReached = false;
 
-        // We still use one-tile pieces to find the exact depth band, but appendMerged()
-        // immediately recombines adjacent pieces with the same material. That is important:
-        // CoI's mining/resource logic has fast paths for the first four terrain layers, so
-        // leaving 50 individual rock slices above a deposit can make a valid resource behave
-        // like it is not mineable. The final stack now stays compact like normal generated terrain.
         var rewritten = new List<TerrainMaterialThicknessSlim>(originalLayers.Count + 4);
 
         for (int layerIndex = 0; layerIndex < originalLayers.Count; layerIndex++) {
             TerrainMaterialThicknessSlim remaining = originalLayers[layerIndex];
 
             if (depthCursor >= targetEnd) {
-                appendMerged(rewritten, remaining);
+                rewritten.Add(remaining);
                 continue;
             }
 
@@ -320,7 +301,9 @@ public sealed class DeepMineBrushTool : IUnityInputController {
                         $"terrain layer stack exceeded {MaxSlicesPerTile} slices before depth {targetEnd}");
                 }
 
-                TerrainMaterialThicknessSlim piece = remaining.RemoveAsMuchAs(oneTile, out TerrainMaterialThicknessSlim next);
+                TerrainMaterialThicknessSlim piece = remaining.RemoveAsMuchAs(
+                    oneTile,
+                    out TerrainMaterialThicknessSlim next);
                 if (isEmpty(piece)) break;
 
                 bool insideBand = depthCursor >= targetStart && depthCursor < targetEnd;
@@ -330,13 +313,13 @@ public sealed class DeepMineBrushTool : IUnityInputController {
                     piece = piece.WithNewId(targetId);
                 }
 
-                appendMerged(rewritten, piece);
+                appendOneTileMerged(rewritten, piece, oneTile);
                 depthCursor++;
                 remaining = next;
             }
 
             if (!isEmpty(remaining)) {
-                appendMerged(rewritten, remaining);
+                rewritten.Add(remaining);
             }
         }
 
@@ -352,29 +335,26 @@ public sealed class DeepMineBrushTool : IUnityInputController {
             m_terrainManager,
             new object[] { rawIndex, height, surface, flags, layers, layers.Length });
 
-        // Use the broader layer notification rather than only the renderer/material event.
-        // Height is unchanged, but this refreshes terrain designations/mining consumers that
-        // depend on layer ordering as overburden is removed and the ore becomes exposed.
+        // A full layer-stack notification is intentional here. The height itself is unchanged,
+        // but mining/designation logic needs to rebuild its view of the top terrain layers.
         m_terrainManager.NotifyTileHeightLayersChanged(tile);
         return true;
     }
 
-    private static void appendMerged(
+    private static void appendOneTileMerged(
         List<TerrainMaterialThicknessSlim> layers,
-        TerrainMaterialThicknessSlim layer)
+        TerrainMaterialThicknessSlim oneTileLayer,
+        ThicknessTilesF oneTile)
     {
-        if (isEmpty(layer)) return;
+        if (isEmpty(oneTileLayer)) return;
 
         int lastIndex = layers.Count - 1;
-        if (lastIndex >= 0 && layers[lastIndex].SlimId.Equals(layer.SlimId)) {
-            TerrainMaterialThicknessSlim last = layers[lastIndex];
-            TerrainMaterialThickness full = layer.ToFull(null);
-            // ToFull requires a TerrainManager in normal use, so this path is intentionally
-            // not used. Adjacent one-tile pieces created by this tool are merged by adding
-            // one tile at a time below; larger untouched remainders stay as their original layer.
+        if (lastIndex >= 0 && layers[lastIndex].SlimId.Equals(oneTileLayer.SlimId)) {
+            layers[lastIndex] = layers[lastIndex] + oneTile;
         }
-
-        layers.Add(layer);
+        else {
+            layers.Add(oneTileLayer);
+        }
     }
 
     private static bool isEmpty(TerrainMaterialThicknessSlim layer) {
